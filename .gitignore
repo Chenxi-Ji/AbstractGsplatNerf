@@ -15,8 +15,8 @@ venv/
 Thumbs.db
 
 #Content
-Abstract/*
-!Abstract/output/.gitkeep
+AbstractImages/*
+!AbstractImages/output/*
 
 DownStreamModel/*
 !DownStreamModel/.gitkeep
@@ -24,4 +24,7 @@ DownStreamModel/*
 auto_LiRPA/*
 
 nerfstudio/*
-!nerfstudio/outputs/ariplane_grey/2025-08-02_025446/*.gitkeep
+!nerfstudio/outputs/
+!nerfstudio/outputs/ariplane_grey/
+!nerfstudio/outputs/ariplane_grey/2025-08-02_025446/
+!nerfstudio/outputs/ariplane_grey/2025-08-02_025446/*
