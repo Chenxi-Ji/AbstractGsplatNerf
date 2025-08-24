@@ -1,0 +1,27 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+.env/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+#Content
+Abstract/*
+!Abstract/output/.gitkeep
+
+DownStreamModel/*
+!DownStreamModel/.gitkeep
+
+auto_LiRPA/*
+
+nerfstudio/*
+!nerfstudio/outputs/ariplane_grey/2025-08-02_025446/*.gitkeep
