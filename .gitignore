@@ -16,12 +16,13 @@ Thumbs.db
 
 #Content
 AbstractImages/*
-#!AbstractImages/output/*
+!AbstractImages/output/*
 
 DownStreamModel/*
-#!DownStreamModel/.gitkeep
+!DownStreamModel/.gitkeep
 
 auto_LiRPA/*
+!auto_LiRPA/.gitkeep
 
 nerfstudio/*
 !nerfstudio/outputs/
