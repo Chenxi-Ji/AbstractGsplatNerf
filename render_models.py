@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from utils import quaternion_to_rotation_matrix, convert_input_to_pose, alpha_blending
+from utils import quaternion_to_rotation_matrix, convert_input_to_pose, alpha_blending, regulate
 
 class TransferModel(nn.Module):
     def __init__(self, model, rot, trans, transform_hom, scale, domain_type):
@@ -17,42 +17,25 @@ class TransferModel(nn.Module):
     def preprocess(self, input):
         pose = convert_input_to_pose(input, self.rot, self.trans, self.transform_hom, self.scale, self.domain_type)
         return pose
-
-    def sort_gauss(self, input):
-        pose = self.preprocess(input)
-        self.model.sort_gauss(pose)
-
-    def crop_gauss(self, input, tile_dict):
-        pose = self.preprocess(input)
-        self.model.crop_gauss(pose, tile_dict)
-
-    def get_num(self):
-        return self.model.get_num()
-
-    def get_gs_batch(self):
-        return self.model.get_gs_batch()
     
-    def get_color_tile(self):
-        return self.model.get_color_tile()
-    
-    def get_bg_color_tile(self):
-        return self.model.get_bg_color_tile()
+    def call_model(self, method_name, *args, **kwargs):
+        method = getattr(self.model, method_name)
+        return method(*args, **kwargs)
 
-    def update_model_param(self, idx_start, idx_end, blending_method):
-        self.model.update_model_param(idx_start, idx_end, blending_method)
-
-    def render_color_alpha(self, input):
+    def call_model_preprocess(self, method_name, input, *args, **kwargs):
+  
         pose = self.preprocess(input)
-        res = self.model.render_color_alpha(pose)
-        return res
-
+        method = getattr(self.model, method_name)
+        
+        return method(pose, *args, **kwargs)
+    
     def forward(self, input):
         pose = self.preprocess(input)
         res = self.model.forward(pose)
         return res
 
 class GsplatRGB(nn.Module):
-    def __init__(self, camera_dict, scene_dict_all, bg_color=None, gs_batch=120, gs_max_num=100):
+    def __init__(self, camera_dict, scene_dict_all, bg_color=None, gs_batch=220, gs_max_num=100):
         super(GsplatRGB, self).__init__()
 
         self.camera_dict = camera_dict
@@ -171,6 +154,8 @@ class GsplatRGB(nn.Module):
     def get_gs_batch(self):
         return self.gs_batch
 
+    def get_tile_dict(self):
+        return self.tile_dict
 
     def get_color_tile(self):
         return self.scene_dict["colors"]
@@ -399,7 +384,9 @@ class GsplatRGB(nn.Module):
         pose = input
 
         return self.render_alpha_tile(pose)
-        return self.render_alpha_2(pose)
+        return self.render_color_alpha(pose)
+        
+        
 
 
 class AlphaBlending(nn.Module):
@@ -411,3 +398,39 @@ class AlphaBlending(nn.Module):
     def forward(self, input):
         colors, alpha = input[:, :, :, :, :3], input[:, :, :, :, 3:4]
         return alpha_blending(alpha, colors, self.blending_method, self.triu_mask)
+    
+
+
+class AlphaBlendingNew(nn.Module):
+    def __init__(self, N, colors):
+        super(AlphaBlendingNew, self).__init__()
+        
+        self.triu_mask = torch.triu(torch.ones(N, N), diagonal=1)
+        self.colors = colors
+        # print(self.triu_mask.shape)
+
+    def cumsum(self, x, triu_mask, dim=-2):
+        N = x.size(-2)
+        triu_mask = triu_mask[:N, :N].to(x.device)
+        cumsum_x = (triu_mask[None, None, None, :, :] * x).sum(dim=dim, keepdim=True) # [1, TH, TW, 1, B]
+        cumsum_x = cumsum_x.transpose(-1,-2) # [1, TH, TW, B, 1]
+
+        return cumsum_x
+
+    def cumprod(self, x, triu_mask, dim=-2, eps_min=1e-8):
+        x = torch.nn.functional.relu(x-eps_min)+eps_min 
+        return torch.exp(self.cumsum(torch.log(x), triu_mask, dim=dim))
+    
+    def alphablending(self, alpha):
+        transmittance = regulate(self.cumprod((1-alpha),self.triu_mask, dim=-2))
+        colors = self.colors.to(alpha.device)
+
+        #alpha_combined= regulate(regulate(alpha*transmittance).sum(dim=-2, keepdim=True)) # [1, TH, TW, 1, 1]
+        colors_combined = regulate(regulate(alpha*transmittance*colors).sum(dim=-2, keepdim=True)) # [1, TH, TW, 1, 3]
+
+        return colors_combined
+
+    def forward(self, input):
+
+        res = self.alphablending(input)
+        return res

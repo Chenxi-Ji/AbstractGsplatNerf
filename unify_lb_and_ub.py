@@ -39,5 +39,5 @@ def compute_and_save_abstract_images(save_folder_full):
 
 if __name__ == '__main__':
     # Folder where images are saved
-    save_folder_full = "./AbstractImages/output_z"
+    save_folder_full = "./AbstractImages/output_y"
     compute_and_save_abstract_images(save_folder_full)

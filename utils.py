@@ -183,7 +183,7 @@ def alpha_blending(alpha, colors, method, triu_mask=None):
     colors_alpha_combined = torch.cat((colors_combined, alpha_combined), dim =-1)
     return colors_alpha_combined
 
-def alpha_blending_interval(colors_alpha_lb, colors_alpha_ub):
+def alpha_blending_interval_2(colors_alpha_lb, colors_alpha_ub):
 
     colors_lb,alpha_lb = colors_alpha_lb.split([3,1],dim=-1) 
     colors_ub,alpha_ub = colors_alpha_ub.split([3,1],dim=-1)
@@ -204,7 +204,7 @@ def alpha_blending_interval(colors_alpha_lb, colors_alpha_ub):
     color_alpha_out_ub = torch.cat([color_out_ub,alpha_out_ub], dim = -1)
     return color_alpha_out_lb, color_alpha_out_ub
 
-def alpha_blending_interval_2(alpha_lb, alpha_ub, colors):
+def alpha_blending_interval(alpha_lb, alpha_ub, colors):
     
     alpha_lb_shifted = torch.cat([torch.zeros_like(alpha_lb[:,:,:,0:1,:], dtype=alpha_lb.dtype), alpha_lb[:,:,:,:-1,:]], dim=-2)
     transmittance_ub = regulate(torch.cumprod((1-alpha_lb_shifted), dim=-2))
