@@ -48,13 +48,14 @@ def alpha_blending_ref(net, input_ref):
         return bg_color.squeeze(-2)
 
     else:
-        N=min(N,2000)
-        net.update_model_param(0,N,"middle")
-        model = BoundedModule(net, input_ref, device=DEVICE)
-        colors_alpha = model.forward(input_ref)  #[1, TH, TW, N, 4]
+        # N=min(N,2000)
+        # net.update_model_param(0,N,"middle")
+        # model = BoundedModule(net, input_ref, device=DEVICE)
+        # colors_alpha = model.forward(input_ref)  #[1, TH, TW, N, 4]
 
-        # net.update_model_param(0,N,"fast")
-        # colors_alpha = net.forward(input_ref)  #[1, TH, TW, N, 4]
+        net.update_model_param(0,N,"fast")
+        # print("intpu_ref:", input_ref.shape)
+        colors_alpha = net.render_color_alpha(input_ref)  #[1, TH, TW, N, 4]
 
         colors, alpha = colors_alpha.split([3,1], dim=-1)
 
@@ -206,8 +207,8 @@ def alpha_blending_ptb_interval(net, input_ref, input_ptb, bound_method):
     
     
 def main(setup_dict):
-    key_list = ["bound_method", "render_method", "width", "height", "f", "tile_size", "scene_path", "checkpoint_filename", "save_folder", "save_ref", "save_bound", "domain_type"]
-    bound_method, render_method, width, height, f, tile_size, scene_path, checkpoint_filename, save_folder, save_ref, save_bound, domain_type = (setup_dict[key] for key in key_list)
+    key_list = ["bound_method", "render_method", "width", "height", "f", "tile_size", "scene_path", "checkpoint_filename", "bg_img_path", "save_folder", "save_ref", "save_bound", "domain_type"]
+    bound_method, render_method, width, height, f, tile_size, scene_path, checkpoint_filename, bg_img_path, save_folder, save_ref, save_bound, domain_type = (setup_dict[key] for key in key_list)
 
     # Load Already Trained Scene Files
     script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -259,8 +260,14 @@ def main(setup_dict):
     }
 
     # Define Background Image
-    bg_pure_color = torch.tensor([123/255, 139/255, 196/255])
-    bg_color = bg_pure_color.view(1, 1, 3).repeat(height, width,  1).to(DEVICE)
+    if bg_img_path is None:
+        bg_pure_color = torch.tensor([123/255, 139/255, 196/255])
+        bg_color = bg_pure_color.view(1, 1, 3).repeat(height, width,  1).to(DEVICE)
+    else:
+        bg_img = Image.open(bg_img_path).convert("RGB")  # ensure 3 channels
+        bg_img = bg_img.resize((height, width), Image.LANCZOS) 
+        bg_img = np.array(bg_img, dtype=np.float32)  # shape: (H, W, 3)
+        bg_color = torch.from_numpy(bg_img/255).to(DEVICE)  # shape: (H, W, 3)
     
     # Generate Rotation Matrix
     start_arr = np.array([-np.cos(np.deg2rad(20))*2.5, np.sin(np.deg2rad(20))*2.5, 0.0])*4
@@ -273,8 +280,12 @@ def main(setup_dict):
     # Define Operational Domain
     # input_min = torch.tensor([6, np.deg2rad(13), np.deg2rad(-1)]).to(DEVICE)
     # input_max = torch.tensor([7, np.deg2rad(15), np.deg2rad(1)]).to(DEVICE)
-    input_min = torch.tensor([0.9]).to(DEVICE)
-    input_max = torch.tensor([1]).to(DEVICE)
+    input_min = torch.tensor([-5/6]).to(DEVICE)
+    input_max = torch.tensor([5/6]).to(DEVICE)
+    input_min = torch.tensor([-np.deg2rad(10)]).to(DEVICE)
+    input_max = torch.tensor([np.deg2rad(10)]).to(DEVICE)
+    input_min = torch.tensor([-1]).to(DEVICE)
+    input_max = torch.tensor([-0.9]).to(DEVICE)
     # input_max = input_min
     partition_per_dim = 500
 
@@ -362,7 +373,8 @@ def main(setup_dict):
             absimg_num+=1
 
         pbar.update(1)
-        break
+        if absimg_num>=1:
+            break
     pbar.close()
 
             
@@ -384,8 +396,10 @@ if __name__=='__main__':
     scene_path = 'outputs/airplane_grey/splatfacto/2025-08-02_025446'
     checkpoint_filename = "step-000299999.ckpt"
 
-    save_folder = "AbstractImages/output"
-    save_ref = False
+    bg_img_path = "./BgImg/mountain.jpg"
+
+    save_folder = "AbstractImages/output_y"
+    save_ref = True
     save_bound = True
 
     setup_dict = {
@@ -397,10 +411,11 @@ if __name__=='__main__':
         "tile_size": tile_size,
         "scene_path": scene_path,
         "checkpoint_filename": checkpoint_filename,
+        "bg_img_path": bg_img_path,
         "save_folder": save_folder,
         "save_ref": save_ref,
         "save_bound": save_bound,
-        "domain_type": "z",
+        "domain_type": "y",
     }
 
     start_time=time.time()
@@ -410,7 +425,3 @@ if __name__=='__main__':
     print(f"Running Time:{(end_time-start_time)/60:.4f} min")
 
 
-### Next Work
-### 1 Use better method to drop off GS (maybe keep all involved GS but not perturbed)
-### 2 Reduce Computation time of Cumulative Product
-### 3 Reduce Computation Complexity of Matrix Multiplication

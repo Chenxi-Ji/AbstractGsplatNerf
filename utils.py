@@ -86,7 +86,7 @@ def convert_input_to_pose(input, rot, trans, transform_hom, scale, type):
             x = -xz * torch.cos(theta_h)
         elif type == "y":
 
-            y = input[:, 0]
+            y = input[:, 0]+trans[1]
             x = torch.ones_like(y)*trans[0]
             z = torch.ones_like(y)*trans[2]
         elif type == "z":
@@ -100,8 +100,8 @@ def convert_input_to_pose(input, rot, trans, transform_hom, scale, type):
 
             y = torch.ones_like(yaw)*trans[1]
             xz = trans[0]
-            z = xz * torch.sin(yaw)
-            x = -xz * torch.cos(yaw)
+            z = -xz * torch.sin(yaw)
+            x = xz * torch.cos(yaw)
 
         return torch.stack([x, y, z], dim=-1)
 
@@ -111,6 +111,7 @@ def convert_input_to_pose(input, rot, trans, transform_hom, scale, type):
     translation = translation.to(DEVICE)
 
     #print(translation.device, rot.device, input.device)
+    # print(rot.shape, input.shape, translation.shape)
     # Build transformation matrix in shape (B, 4, 4)
     B = translation.shape[0]
     trans_mat = torch.cat([

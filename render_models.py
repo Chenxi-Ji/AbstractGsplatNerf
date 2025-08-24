@@ -41,6 +41,11 @@ class TransferModel(nn.Module):
     def update_model_param(self, idx_start, idx_end, blending_method):
         self.model.update_model_param(idx_start, idx_end, blending_method)
 
+    def render_color_alpha(self, input):
+        pose = self.preprocess(input)
+        res = self.model.render_color_alpha(pose)
+        return res
+
     def forward(self, input):
         pose = self.preprocess(input)
         res = self.model.forward(pose)
@@ -150,7 +155,7 @@ class GsplatRGB(nn.Module):
                 name: attr[mask][:N]
                 for name, attr in self.scene_dict_sorted.items()
             }
-            print(f"Tile {hl,wl,hu,wu} Contains {N} Gaussians.")
+            #print(f"Tile {hl,wl,hu,wu} Contains {N} Gaussians.")
 
         # Generate Up Triangel Matrix
         self.triu_mask = torch.triu(torch.ones(N+2, N+2), diagonal=1)
