@@ -55,28 +55,45 @@ def quaternion_to_rotation_matrix(quats):
 
     return R 
 
+# def dir_to_rpy_and_rot(target, pose):
+
+#     direction = target-pose
+
+#     direction = np.array(direction, dtype=float)
+#     direction = direction / np.linalg.norm(direction)
+
+#     yaw = np.arctan2(direction[1], direction[0])
+#     pitch = -np.arcsin(direction[2])
+
+#     rotation_matrix = Rotation.from_euler('xyz',[0,pitch,yaw]).as_matrix()
+#     R = Rotation.from_euler('yzx',[np.pi/2, 0, -np.pi/2]).as_matrix()
+#     rot_matrix = rotation_matrix@R
+
+#     R = Rotation.from_euler('yzx',[0, -np.pi/2, 0]).as_matrix()
+#     rot_matrix = rot_matrix@R
+
+#     return rot_matrix
+
 def dir_to_rpy_and_rot(target, pose):
+    forward = target - pose
+    forward = forward / np.linalg.norm(forward)
 
-    direction = target-pose
+    world_up = np.array([0, 1, 0], dtype=float)
+    # If forward is parallel to world_up, choose another up vector
+    if np.allclose(np.abs(np.dot(forward, world_up)), 1.0):
+        world_up = np.array([0, 0, 1], dtype=float)
 
-    direction = np.array(direction, dtype=float)
-    direction = direction / np.linalg.norm(direction)
+    right = np.cross(world_up, forward)
+    right = right / np.linalg.norm(right)
+    up = np.cross(forward, right)
 
-    yaw = np.arctan2(direction[1], direction[0])
-    pitch = -np.arcsin(direction[2])
-
-    rotation_matrix = Rotation.from_euler('xyz',[0,pitch,yaw]).as_matrix()
-    R = Rotation.from_euler('yzx',[np.pi/2, 0, -np.pi/2]).as_matrix()
-    rot_matrix = rotation_matrix@R
-
-    R = Rotation.from_euler('yzx',[0, -np.pi/2, 0]).as_matrix()
-    rot_matrix = rot_matrix@R
-
+    rot_matrix = np.column_stack((right, up, forward))  # columns: right, up, forward
     return rot_matrix
 
 
-def convert_input_to_pose(input, rot, trans, transform_hom, scale, type):
-    def convert_input_to_translation(input, trans, type):
+def convert_input_to_translation(input, trans, type):
+        input = input.to(trans.device)
+
         if type == "3":
             r, theta_v, theta_h = input[:, 0], input[:, 1], input[:, 2]
             
@@ -103,14 +120,36 @@ def convert_input_to_pose(input, rot, trans, transform_hom, scale, type):
             z = -xz * torch.sin(yaw)
             x = xz * torch.cos(yaw)
 
+        elif type == "round":
+            yaw  = input[:, 0]
+            initial_yaw = torch.arctan2(-trans[2],trans[0])
+
+            y  = torch.ones_like(yaw)*trans[1]
+            xz = torch.sqrt(trans[0]**2+trans[2]**2)
+            z = -xz * torch.sin(yaw+initial_yaw)
+            x = xz * torch.cos(yaw+initial_yaw)
+
         return torch.stack([x, y, z], dim=-1)
 
+def convert_input_to_rot(input, trans, type):
+    translation = convert_input_to_translation(input, trans, type)
+    translation = translation.detach().cpu().numpy().squeeze(0) #[3, ]
+
+    center = np.zeros((3,))
+
+    rot = dir_to_rpy_and_rot(translation, center)
+
+    return rot
+
+def convert_input_to_pose(input, rot, trans, transform_hom, scale, type):
+    
     DEVICE = rot.device
     DTYPE = rot.dtype
     translation = convert_input_to_translation(input, trans, type)  # [B, 3]
     translation = translation.to(DEVICE)
 
     #print(translation.device, rot.device, input.device)
+    #print(translation.dtype, rot.dtype, input.dtype)
     # print(rot.shape, input.shape, translation.shape)
     # Build transformation matrix in shape (B, 4, 4)
     B = translation.shape[0]
@@ -256,21 +295,33 @@ def generate_fixed_poses(camera_pose, transform_hom, scale):
     
     return view_mats, view_mats, view_mats
 
-def generate_bound(input_min, input_max, partition_per_dim=2):
+def generate_bound(input_min, input_max, partition_per_dim=2, selection_per_dim=None):
+    if selection_per_dim is None:
+        selection_per_dim = partition_per_dim
+
     N = input_min.size(0)
 
     # Generate boundaries for each dimension
     grids = []
+    idx_choices = []
     for i in range(N):
-        edges = torch.linspace(input_min[i], input_max[i], steps=partition_per_dim + 1)
+        edges = torch.linspace(input_min[i], input_max[i], steps=partition_per_dim+1 )
         grids.append(edges)
+
+        if selection_per_dim >= partition_per_dim:
+            choices = list(range(partition_per_dim))  # use all intervals
+        else:
+            choices = torch.linspace(
+                0, partition_per_dim-1 , steps=selection_per_dim, dtype=torch.long
+            ).tolist()
+        idx_choices.append(choices)
 
     inputs_lb = []
     inputs_ub = []
     inputs_ref = []
 
     # Cartesian product of partitions in each dimension
-    for indices in itertools.product(range(partition_per_dim), repeat=N):
+    for indices in itertools.product(*idx_choices, repeat=N):
         lb = torch.tensor([grids[dim][idx] for dim, idx in enumerate(indices)])
         ub = torch.tensor([grids[dim][idx + 1] for dim, idx in enumerate(indices)])
         ref = (lb + ub) / 2

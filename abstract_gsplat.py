@@ -11,12 +11,12 @@ from tqdm import tqdm
 from scipy.spatial.transform import Rotation 
 from PIL import Image 
 
-from auto_LiRPA import BoundedModule, BoundedTensor, PerturbationLpNorm, PerturbationLinear
+from auto_LiRPA import BoundedModule, BoundedTensor, PerturbationLpNorm
 from collections import defaultdict
 
-from utils import dir_to_rpy_and_rot, generate_samples, alpha_blending,  regulate
-from utils import generate_fixed_poses,generate_bound
-from utils import alpha_blending_interval, alpha_blending_interval_2
+from utils import dir_to_rpy_and_rot, generate_samples, alpha_blending
+from utils import generate_fixed_poses,generate_bound,  convert_input_to_rot
+from utils import alpha_blending_interval
 from render_models import GsplatRGB, TransferModel, AlphaBlending, AlphaBlendingNew
 
 
@@ -136,9 +136,9 @@ def alpha_blending_ptb(net, input_ref, input_lb, input_ub, bound_method):
 
     
 def main(setup_dict):
-    key_list = ["bound_method", "render_method", "width", "height", "f", "tile_size", " partition_per_dim", "scene_path", "checkpoint_filename", "bg_img_path", "save_folder", "save_ref", "save_bound", "domain_type"]
-    bound_method, render_method, width, height, f, tile_size,  partition_per_dim, scene_path, checkpoint_filename, bg_img_path, save_folder, save_ref, save_bound, domain_type = (setup_dict[key] for key in key_list)
-
+    key_list = ["bound_method", "render_method", "width", "height", "f", "tile_size", "partition_per_dim", "selection_per_dim", "scene_path", "checkpoint_filename", "bg_img_path", "save_folder", "save_ref", "save_bound", "domain_type", "input_min", "input_max"]
+    bound_method, render_method, width, height, f, tile_size,  partition_per_dim, selection_per_dim, scene_path, checkpoint_filename, bg_img_path, save_folder, save_ref, save_bound, domain_type, input_min, input_max = (setup_dict[key] for key in key_list)
+    
     # Load Already Trained Scene Files
     script_dir = os.path.dirname(os.path.realpath(__file__))
     scene_folder = os.path.join(script_dir, 'nerfstudio/', scene_path)
@@ -199,28 +199,18 @@ def main(setup_dict):
         bg_color = torch.from_numpy(bg_img/255).to(DEVICE)  # shape: (H, W, 3)
     
     # Generate Rotation Matrix
-    start_arr = np.array([-np.cos(np.deg2rad(20))*2.5, np.sin(np.deg2rad(20))*2.5, 0.0])*4
+    start_arr = np.array([-np.cos(np.deg2rad(20)), np.sin(np.deg2rad(20)), 0.0])*6
     end_arr = np.array([0.0, 0.0, 0.0])
     rot = dir_to_rpy_and_rot(start_arr, end_arr)
     rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
     trans = np.array([-np.cos(np.deg2rad(20)), np.sin(np.deg2rad(20)), 0.0])*6
+    trans = torch.from_numpy(trans).to(device=DEVICE, dtype=DTYPE)
     # print("rot:",rot)
 
-    # Define Operational Domain
-    # input_min = torch.tensor([6, np.deg2rad(13), np.deg2rad(-1)]).to(DEVICE)
-    # input_max = torch.tensor([7, np.deg2rad(15), np.deg2rad(1)]).to(DEVICE)
-    input_min = torch.tensor([-5/6]).to(DEVICE)
-    input_max = torch.tensor([5/6]).to(DEVICE)
-    input_min = torch.tensor([-np.deg2rad(10)]).to(DEVICE)
-    input_max = torch.tensor([np.deg2rad(10)]).to(DEVICE)
-    input_min = torch.tensor([-0.5]).to(DEVICE)
-    input_max = torch.tensor([-0.0]).to(DEVICE)
-    # input_max = input_min
-    
-
-    inputs_lb, inputs_ub, inputs_ref = generate_bound(input_min, input_max, partition_per_dim) # [partition_per_dim^N, N]
+    inputs_lb, inputs_ub, inputs_ref = generate_bound(input_min, input_max, partition_per_dim, selection_per_dim) # [partition_per_dim^N, N]
     inputs_lb, inputs_ub, inputs_ref = inputs_lb.to(DEVICE), inputs_ub.to(DEVICE), inputs_ref.to(DEVICE)
-    partition_num = len(inputs_ref)
+    # partition_num = len(inputs_ref)
+    
 
     inputs_queue = list(zip(inputs_lb, inputs_ub, inputs_ref))
 
@@ -232,6 +222,7 @@ def main(setup_dict):
     while inputs_queue:
         input_lb, input_ub, input_ref = inputs_queue.pop(0) # [N, ]
         input_lb, input_ub, input_ref = input_lb.unsqueeze(0), input_ub.unsqueeze(0), input_ref.unsqueeze(0) #[1, N]
+        # print(input_lb, input_ub, input_ref)
 
         # ptb = PerturbationLpNorm(x_L=input_lb,x_U=input_ub)
         # input_ptb = BoundedTensor(input_ref, ptb)
@@ -239,6 +230,9 @@ def main(setup_dict):
         img_ref = np.zeros((height, width,3))
         img_lb = np.zeros((height, width,3))
         img_ub = np.zeros((height, width,3))
+
+        rot = convert_input_to_rot(input_ref, trans, domain_type)
+        rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
 
         render_net = GsplatRGB(camera_dict, scene_dict_all, bg_color).to(DEVICE)
         verf_net = TransferModel(render_net, rot, trans, transform_hom, scale, domain_type).to(DEVICE)
@@ -251,7 +245,6 @@ def main(setup_dict):
 
         while tiles_queue!=[]:
             hl,wl,hu,wu = tiles_queue.pop(0)
-            # hl,wl,hu,wu = 12, 42, 18, 48
             tile_dict = {
                 "hl": hl,
                 "wl": wl,
@@ -318,21 +311,39 @@ if __name__=='__main__':
     bound_method = 'forward'
     render_method = 'gsplat_rgb'
     
-    width = 80#64*1
-    height = 80#64*1
-    f = 100#80*1
+    width = 64*2#80#
+    height = 64*2#80#
+    f = 80*2#100#
     tile_size = 6*2 #4
 
-    partition_per_dim = 500
+    partition_per_dim = 20000##5000
+    selection_per_dim = 200
 
     scene_path = 'outputs/airplane_grey/splatfacto/2025-08-02_025446'
     checkpoint_filename = "step-000299999.ckpt"
 
     bg_img_path = None#"./BgImg/mountain.jpg"
 
-    save_folder = "AbstractImages/output_z"
+    domain_type = "round"
+
+    save_folder = "Outputs/AbstractImages/"+domain_type
     save_ref = True
     save_bound = True
+
+    # input_min = torch.tensor([6, np.deg2rad(13), np.deg2rad(-1)]).to(DEVICE)
+    # input_max = torch.tensor([7, np.deg2rad(15), np.deg2rad(1)]).to(DEVICE)
+    # yaw
+    # input_min = torch.tensor([-np.deg2rad(30)]).to(DEVICE)
+    # input_max = torch.tensor([np.deg2rad(30)]).to(DEVICE)
+    # y
+    # input_min = torch.tensor([-2]).to(DEVICE)
+    # input_max = torch.tensor([2]).to(DEVICE)
+    # z and x
+    # input_min = torch.tensor([-1]).to(DEVICE)
+    # input_max = torch.tensor([1]).to(DEVICE)
+    # round
+    input_min = torch.tensor([0]).to(DEVICE)
+    input_max = torch.tensor([2*np.pi-0.001]).to(DEVICE)
 
     setup_dict = {
         "bound_method": bound_method,
@@ -341,14 +352,17 @@ if __name__=='__main__':
         "height": height,
         "f": f,
         "tile_size": tile_size,
-        " partition_per_dim":  partition_per_dim,
+        "partition_per_dim": partition_per_dim,
+        "selection_per_dim": selection_per_dim,
         "scene_path": scene_path,
         "checkpoint_filename": checkpoint_filename,
         "bg_img_path": bg_img_path,
         "save_folder": save_folder,
         "save_ref": save_ref,
         "save_bound": save_bound,
-        "domain_type": "z",
+        "domain_type": domain_type,
+        "input_min": input_min,
+        "input_max": input_max,
     }
 
     start_time=time.time()

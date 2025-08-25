@@ -6,6 +6,7 @@ def compute_and_save_abstract_images(save_folder_full):
     # Lists to hold loaded images
     lb_images = []
     ub_images = []
+    ref_images = []
 
     # Load images
     for fname in os.listdir(save_folder_full):
@@ -15,6 +16,9 @@ def compute_and_save_abstract_images(save_folder_full):
         elif fname.startswith("ub_") and fname.endswith(".png"):
             img = np.array(Image.open(os.path.join(save_folder_full, fname)), dtype=np.float32) / 255.0
             ub_images.append(img)
+        elif fname.startswith("ref_") and fname.endswith(".png"):
+            img = np.array(Image.open(os.path.join(save_folder_full, fname)), dtype=np.float32) / 255.0
+            ref_images.append(img)
 
     # Check if images are found
     if lb_images:
@@ -37,7 +41,17 @@ def compute_and_save_abstract_images(save_folder_full):
     else:
         print("No ub images found.")
 
+    if ref_images:
+        # Stack and compute pixel-wise maximum (unified reference)
+        ref_stack = np.stack(ref_images, axis=0)
+        unified_ref = np.max(ref_stack, axis=0)
+        unified_ref_img = (unified_ref.clip(0.0, 1.0) * 255).astype(np.uint8)
+        Image.fromarray(unified_ref_img).save(os.path.join(save_folder_full, "unified_ref.png"))
+        print("Unified ref bound saved as unified_ref.png")
+    else:
+        print("No ref images found.")
+
 if __name__ == '__main__':
     # Folder where images are saved
-    save_folder_full = "./AbstractImages/output_y"
+    save_folder_full = "./Outputs/AbstractImages/side"
     compute_and_save_abstract_images(save_folder_full)

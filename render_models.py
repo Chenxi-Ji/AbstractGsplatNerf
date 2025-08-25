@@ -110,10 +110,10 @@ class GsplatRGB(nn.Module):
         alpha_max = alpha.amax(dim=(0, 1, 2))
 
         # Filter Too small Alpha
-        idx1, idx2, idx3 =40, 200, 1000
+        idx1, idx2, idx3 =50, 200, 1000
         mask = (alpha_max>0.1) 
-        mask[idx1:] = mask[idx1:] & (alpha_max[idx1:] > 0.2) 
-        mask[idx2:] = mask[idx2:] & (alpha_max[idx2:] > 0.25) 
+        mask[idx1:] = mask[idx1:] & (alpha_max[idx1:] > 0.15) 
+        mask[idx2:] = mask[idx2:] & (alpha_max[idx2:] > 0.2) 
         mask[idx3:] = mask[idx3:] & (alpha_max[idx3:] > 0.3) 
         N_masked = mask.sum().item()
             
