@@ -12,9 +12,8 @@ from tqdm import tqdm
 from scipy.spatial.transform import Rotation 
 from PIL import Image 
 
-current_path = os.path.dirname(os.path.realpath(__file__))
-parent_path = os.path.abspath(os.path.join(current_path, "../.."))
-sys.path.append(parent_path)
+grandfather_path = os.path.abspath(os.path.join(__file__, "../../.."))
+sys.path.append(grandfather_path)
 
 from auto_LiRPA import BoundedModule, BoundedTensor, PerturbationLpNorm
 from collections import defaultdict
@@ -41,7 +40,8 @@ def main(setup_dict):
     bound_method, render_method, width, height, f, tile_size,  partition_per_dim, selection_per_dim, scene_path, checkpoint_filename, bg_img_path, save_folder, save_ref, save_bound, domain_type, N_samples, input_min, input_max = (setup_dict[key] for key in key_list)
     
     # Load Already Trained Scene Files
-    script_dir = parent_path
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    script_dir = os.path.join(script_dir, grandfather_path)
     scene_folder = os.path.join(script_dir, 'nerfstudio/', scene_path)
     transform_file = os.path.join(scene_folder, 'dataparser_transforms.json')
     checkpoint_file = os.path.join(scene_folder, 'nerfstudio_models/', checkpoint_filename)
@@ -91,7 +91,7 @@ def main(setup_dict):
 
     # Define Background Image
     if bg_img_path is None:
-        bg_pure_color = torch.tensor([0, 0, 0])
+        bg_pure_color = torch.tensor([123/255, 139/255, 196/255])
         bg_color = bg_pure_color.view(1, 1, 3).repeat(height, width,  1).to(DEVICE)
     else:
         bg_img = Image.open(bg_img_path).convert("RGB")  # ensure 3 channels
@@ -100,34 +100,18 @@ def main(setup_dict):
         bg_color = torch.from_numpy(bg_img/255).to(DEVICE)  # shape: (H, W, 3)
     
     # Generate Rotation Matrix
-    start_arr = np.array([1.9, -3.0, 1.91])
+    start_arr = np.array([-np.cos(np.deg2rad(20)), np.sin(np.deg2rad(20)), 0.0])*6
     end_arr = np.array([0.0, 0.0, 0.0])
     rot = dir_to_rpy_and_rot(start_arr, end_arr)
-    rot = np.array([
-                [
-                    0.8422731161117554,
-                    -0.25616011023521423,
-                    0.47429734468460083
-                ],
-                [
-                    0.5390509963035583,
-                    0.40025293827056885,
-                    -0.7410947680473328
-                ],
-                [
-                    1.4901161193847656e-08,
-                    0.8798747658729553,
-                    0.475205659866333
-                ]])
     rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
-    trans = start_arr#np.array([0.63, -3.68, -2.34])*3
+    trans = np.array([-np.cos(np.deg2rad(20)), np.sin(np.deg2rad(20)), 0.0])*6
     trans = torch.from_numpy(trans).to(device=DEVICE, dtype=DTYPE)
     # print("rot:",rot)
 
     input_ref = (input_min + input_max)/2
     input_min, input_max, input_ref = input_min.unsqueeze(0), input_max.unsqueeze(0), input_ref.unsqueeze(0) #[1, N]
-    inputs_ref = generate_samples(input_min, input_max, input_ref, N_sample=5, include_given=False)#generate_single(input_min, input_max, input_ref)##generate_trajectory(input_min, input_max, input_ref, N_samples) # [N_samples+3, N]
-    inputs_ref = inputs_ref.to(DEVICE)
+    inputs_ref = generate_single(input_min, input_max, input_ref)#generate_trajectory(input_min, input_max, input_ref, N_samples) # [N_samples+3, N]
+    inputs_ref = inputs_ref[3:].to(DEVICE)
     # partition_num = len(inputs_ref)
     
 
@@ -145,8 +129,8 @@ def main(setup_dict):
 
         img_ref = np.zeros((height, width,3))
 
-        # rot = convert_input_to_rot(input_ref, trans, domain_type)
-        # rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
+        rot = convert_input_to_rot(input_ref, trans, domain_type)
+        rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
 
         render_net = GsplatRGBOrigin(camera_dict, scene_dict_all, bg_color).to(DEVICE)
         verf_net = TransferModelOrigin(render_net, rot, trans, transform_hom, scale, domain_type).to(DEVICE)
@@ -198,26 +182,26 @@ if __name__=='__main__':
     # Setup Parameters
     bound_method = 'forward'
     render_method = 'gsplat_rgb'
-    object_name = "dozer"
+    object_name = "airplane_grey"
     
-    width = 64*4#80#
-    height = 64*4#80#
-    f = 32*0.1#100#
+    width = 64*2#80#
+    height = 64*2#80#
+    f = 80*2#100#
     tile_size = 64 #80
 
     partition_per_dim = 20000##5000
-    selection_per_dim = 5
+    selection_per_dim = 200
 
-    scene_path = 'outputs/dozer/splatfacto/2025-09-05_040243'
+    scene_path = 'outputs/airplane_grey/splatfacto/2025-08-02_025446'
     checkpoint_filename = "step-000299999.ckpt"
 
     bg_img_path = None#"./BgImg/mountain.jpg"
 
-    domain_type = "x"
+    domain_type = "y"
 
     save_folder = "Outputs/RenderedImages/"+object_name+"/"+domain_type
     save_ref = True
-    save_bound = False
+    save_bound = True
 
     N_samples = 30
 
@@ -227,11 +211,11 @@ if __name__=='__main__':
     # input_min = torch.tensor([-np.deg2rad(30)]).to(DEVICE)
     # input_max = torch.tensor([np.deg2rad(30)]).to(DEVICE)
     # y
-    # input_min = torch.tensor([-0.5]).to(DEVICE)
-    # input_max = torch.tensor([0.5]).to(DEVICE)
+    input_min = torch.tensor([-2]).to(DEVICE)
+    input_max = torch.tensor([2]).to(DEVICE)
     # z and x
-    input_min = torch.tensor([-1]).to(DEVICE)
-    input_max = torch.tensor([1]).to(DEVICE)
+    # input_min = torch.tensor([-1]).to(DEVICE)
+    # input_max = torch.tensor([1]).to(DEVICE)
     # round
     # input_min = torch.tensor([0]).to(DEVICE)
     # input_max = torch.tensor([2*np.pi-0.001]).to(DEVICE)
