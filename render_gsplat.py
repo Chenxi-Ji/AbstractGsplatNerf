@@ -14,10 +14,10 @@ from PIL import Image
 from auto_LiRPA import BoundedModule, BoundedTensor, PerturbationLpNorm
 from collections import defaultdict
 
-from utils import dir_to_rpy_and_rot, convert_input_to_rot
-from utils import generate_bound,  generate_samples
-from utils import alpha_blending, alpha_blending_interval
-from render_models import GsplatRGB, TransferModel
+from utils import dir_to_rpy_and_rot, generate_samples, generate_trajectory,generate_single
+from utils import convert_input_to_rot
+
+from render_functions import GsplatRGBOrigin, TransferModelOrigin
 
 
 
@@ -30,110 +30,6 @@ warnings.filterwarnings("ignore")
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 DTYPE = torch.float32
-
-bound_opts = {
-    'conv_mode': 'matrix',
-    'optimize_bound_args': {
-        'iteration': 100, 
-        # 'lr_alpha':0.02, 
-        'early_stop_patience':5},
-}, 
-
-def alpha_blending_ref(net, input_ref):
-    
-    N = net.call_model("get_num")
-    triu_mask = torch.triu(torch.ones(N+2, N+2), diagonal=1)
-    bg_color=(net.call_model("get_bg_color_tile")).unsqueeze(0).unsqueeze(-2) #[1, TH, TW, N, 3]
-
-    if N==0:
-        return bg_color.squeeze(-2)
-
-    else:
-        # N=min(N,2000)
-        # net.call_model("update_model_param", 0,N,"middle")
-        # model = BoundedModule(net, input_ref, device=DEVICE)
-        # colors_alpha = model.forward(input_ref)  #[1, TH, TW, N, 4]
-
-        net.call_model("update_model_param", 0,N,"fast")
-        # print("intpu_ref:", input_ref.shape)
-        colors_alpha = net.call_model_preprocess("render_color_alpha", input_ref)  #[1, TH, TW, N, 4]
-
-        colors, alpha = colors_alpha.split([3,1], dim=-1)
-
-        ones = torch.ones_like(alpha[:, :, :, 0:1, :])
-        alpha = torch.cat([alpha,ones], dim=-2) # [1, TH, TW, 2, 1]
-        colors = torch.cat([colors,bg_color], dim=-2) # [1, TH, TW, 2, 3]
-
-        colors_alpha_out = alpha_blending(alpha, colors, "fast", triu_mask)
-        color_out, alpha_out = colors_alpha_out.split([3,1], dim=-1)
-
-        color_out = color_out.squeeze(-2)
-        return color_out
-
-
-def alpha_blending_ptb(net, input_ref, input_lb, input_ub, bound_method):
-
-    N = net.call_model("get_num")
-    gs_batch = net.call_model("get_gs_batch")
-    bg_color=(net.call_model("get_bg_color_tile")).unsqueeze(0).unsqueeze(-2) #[1, TH, TW, N, 3]
-
-    if N==0:
-        return bg_color.squeeze(-2), bg_color.squeeze(-2)
-    else:
-        alphas_int_lb = []
-        alphas_int_ub = []
-
-        hl,wl,hu,wu = (net.call_model("get_tile_dict")[key] for key in ["hl", "wl", "hu", "wu"])
-
-        ptb = PerturbationLpNorm(x_L=input_lb,x_U=input_ub)
-        input_ptb = BoundedTensor(input_ref, ptb)
-
-        with torch.no_grad():
-            for i, idx_start in enumerate(range(0, N, gs_batch)):
-                idx_end = min(idx_start + gs_batch, N)
-                # print("epoch:", i)
-
-                net.call_model("update_model_param",idx_start,idx_end,"middle")
-                model = BoundedModule(net, input_ref, bound_opts=bound_opts, device=DEVICE)
-
-                alpha_ibp_lb, alpha_ibp_ub = model.compute_bounds(x=(input_ptb, ), method="ibp")
-                reference_interm_bounds = {}
-                for node in model.nodes():
-                    if (node.perturbed
-                        and isinstance(node.lower, torch.Tensor)
-                        and isinstance(node.upper, torch.Tensor)):
-                        reference_interm_bounds[node.name] = (node.lower, node.upper)
-
-                alpha_int_lb, alpha_int_ub = model.compute_bounds(x= (input_ptb, ), method="forward", reference_bounds=reference_interm_bounds)  #[1, TH, TW, N, 4]
-                
-                alpha_int_lb = alpha_int_lb.reshape(1, hu-hl, wu-wl, idx_end-idx_start, 1)
-                alpha_int_ub = alpha_int_ub.reshape(1, hu-hl, wu-wl, idx_end-idx_start, 1)
-
-                alphas_int_lb.append(alpha_int_lb.detach())
-                alphas_int_ub.append(alpha_int_ub.detach())
-
-            del model
-            torch.cuda.empty_cache()
-
-            alphas_int_lb = torch.cat(alphas_int_lb, dim=-2)
-            alphas_int_ub = torch.cat(alphas_int_ub, dim=-2)
-
-        # Load Colors within Tile and Add background
-        colors = net.call_model("get_color_tile")
-        colors = colors.view(1, 1, 1, alphas_int_lb.size(-2), 3).repeat(1, alpha_int_lb.size(1), alpha_int_lb.size(2), 1, 1)
-        colors = torch.cat([colors, bg_color], dim = -2)
-
-        ones = torch.ones_like(alphas_int_lb[:, :, :, 0:1, :])
-        alphas_int_lb = torch.cat([alphas_int_lb, ones], dim=-2)
-        alphas_int_ub = torch.cat([alphas_int_ub, ones], dim=-2)        
-
-        color_alpha_out_lb, color_alpha_out_ub = alpha_blending_interval(alphas_int_lb, alphas_int_ub, colors)
-
-        color_out_lb,alpha_out_lb = color_alpha_out_lb.split([3,1],dim=-1)
-        color_out_ub,alpha_out_ub = color_alpha_out_ub.split([3,1],dim=-1)
-
-    return color_out_lb.squeeze(-2), color_out_ub.squeeze(-2)
-
     
 def main(setup_dict):
     key_list = ["bound_method", "render_method", "width", "height", "f", "tile_size", "partition_per_dim", "selection_per_dim", "scene_path", "checkpoint_filename", "bg_img_path", "save_folder", "save_ref", "save_bound", "domain_type", "N_samples", "input_min", "input_max"]
@@ -207,37 +103,32 @@ def main(setup_dict):
     trans = torch.from_numpy(trans).to(device=DEVICE, dtype=DTYPE)
     # print("rot:",rot)
 
-    inputs_lb, inputs_ub, inputs_ref = generate_bound(input_min, input_max, partition_per_dim, selection_per_dim) # [partition_per_dim^N, N]
-    inputs_lb, inputs_ub, inputs_ref = inputs_lb.to(DEVICE), inputs_ub.to(DEVICE), inputs_ref.to(DEVICE)
+    input_ref = (input_min + input_max)/2
+    input_min, input_max, input_ref = input_min.unsqueeze(0), input_max.unsqueeze(0), input_ref.unsqueeze(0) #[1, N]
+    inputs_ref = generate_single(input_min, input_max, input_ref)#generate_trajectory(input_min, input_max, input_ref, N_samples) # [N_samples+3, N]
+    inputs_ref = inputs_ref[3:].to(DEVICE)
     # partition_num = len(inputs_ref)
     
 
-    inputs_queue = list(zip(inputs_lb, inputs_ub, inputs_ref))
-
+    inputs_queue = [input_ref for input_ref in inputs_ref] #list(zip(inputs_lb, inputs_ub, inputs_ref))
+   
     absimg_num = 0
 
     # initialize tqdm without a fixed total
     pbar = tqdm(total=len(inputs_queue),desc="Processing inputs", unit="item")
 
     while inputs_queue:
-        input_lb, input_ub, input_ref = inputs_queue.pop(0) # [N, ]
-        input_lb, input_ub, input_ref = input_lb.unsqueeze(0), input_ub.unsqueeze(0), input_ref.unsqueeze(0) #[1, N]
+        input_ref = inputs_queue.pop(0) # [N, ]
+        input_ref = input_ref.unsqueeze(0) #[1, N]
         # print(input_lb, input_ub, input_ref)
 
-        # ptb = PerturbationLpNorm(x_L=input_lb,x_U=input_ub)
-        # input_ptb = BoundedTensor(input_ref, ptb)
-
-        if save_ref:
-            img_ref = np.zeros((height, width,3))
-        if save_bound:
-            img_lb = np.zeros((height, width,3))
-            img_ub = np.zeros((height, width,3))
+        img_ref = np.zeros((height, width,3))
 
         rot = convert_input_to_rot(input_ref, trans, domain_type)
         rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
 
-        render_net = GsplatRGB(camera_dict, scene_dict_all, bg_color).to(DEVICE)
-        verf_net = TransferModel(render_net, rot, trans, transform_hom, scale, domain_type).to(DEVICE)
+        render_net = GsplatRGBOrigin(camera_dict, scene_dict_all, bg_color).to(DEVICE)
+        verf_net = TransferModelOrigin(render_net, rot, trans, transform_hom, scale, domain_type).to(DEVICE)
         verf_net.call_model_preprocess("sort_gauss", input_ref)
         
         tiles_queue = [
@@ -254,36 +145,20 @@ def main(setup_dict):
                 "wu": wu,
             }
 
-            input_samples = generate_samples(input_lb, input_ub, input_ref, N_samples)
-            verf_net.call_model_preprocess("crop_gauss",input_samples, tile_dict)
+            #input_samples = generate_samples(input_lb, input_ub, input_ref)
+            verf_net.call_model("update_tile", tile_dict)
 
             if save_ref:
-                ref_tile = alpha_blending_ref(verf_net, input_ref)
+                ref_tile = verf_net.forward(input_ref)#alpha_blending_ref(verf_net, input_ref)
                 # print(f"ref_tile min and max: {torch.min(ref_tile).item():.4} {torch.max(ref_tile).item():.4}")
                 ref_tile_np = ref_tile.squeeze(0).detach().cpu().numpy()
                 img_ref[hl:hu, wl:wu, :] = ref_tile_np
+                
 
-            if save_bound:
-                lb_tile, ub_tile = alpha_blending_ptb(verf_net, input_ref, input_lb, input_ub, bound_method)
-                # print(f"lb_tile min and ub_tile max: {torch.min(lb_tile).item():.4} {torch.max(ub_tile).item():.4}")
-                lb_tile_np = lb_tile.squeeze(0).detach().cpu().numpy() # [TH, TW, 3]
-                ub_tile_np = ub_tile.squeeze(0).detach().cpu().numpy()
-                img_lb[hl:hu, wl:wu, :] = lb_tile_np
-                img_ub[hl:hu, wl:wu, :] = ub_tile_np
-
-            
         if save_ref:
             img_ref= (img_ref.clip(min=0.0, max=1.0)*255).astype(np.uint8)
             res_ref = Image.fromarray(img_ref)
             res_ref.save(f'{save_folder_full}/ref_{absimg_num}.png')
-
-        if save_bound:
-            img_lb = (img_lb.clip(min=0.0, max=1.0)*255).astype(np.uint8)
-            img_ub = (img_ub.clip(min=0.0, max=1.0)*255).astype(np.uint8)
-            res_lb = Image.fromarray(img_lb)
-            res_ub = Image.fromarray(img_ub)
-            res_lb.save(f'{save_folder_full}/lb_{absimg_num}.png')
-            res_ub.save(f'{save_folder_full}/ub_{absimg_num}.png')
 
         absimg_num+=1
 
@@ -307,7 +182,7 @@ if __name__=='__main__':
     width = 64*2#80#
     height = 64*2#80#
     f = 80*2#100#
-    tile_size = 6*2 #4
+    tile_size = 64 #80
 
     partition_per_dim = 20000##5000
     selection_per_dim = 200
@@ -317,13 +192,13 @@ if __name__=='__main__':
 
     bg_img_path = None#"./BgImg/mountain.jpg"
 
-    domain_type = "round"
+    domain_type = "y"
 
-    save_folder = "Outputs/AbstractImages/"+object_name+"/"+domain_type
+    save_folder = "Outputs/RenderedImages/"+object_name+"/"+domain_type
     save_ref = True
     save_bound = True
 
-    N_samples = 5
+    N_samples = 30
 
     # input_min = torch.tensor([6, np.deg2rad(13), np.deg2rad(-1)]).to(DEVICE)
     # input_max = torch.tensor([7, np.deg2rad(15), np.deg2rad(1)]).to(DEVICE)
@@ -331,14 +206,14 @@ if __name__=='__main__':
     # input_min = torch.tensor([-np.deg2rad(30)]).to(DEVICE)
     # input_max = torch.tensor([np.deg2rad(30)]).to(DEVICE)
     # y
-    # input_min = torch.tensor([-2]).to(DEVICE)
-    # input_max = torch.tensor([2]).to(DEVICE)
+    input_min = torch.tensor([-2]).to(DEVICE)
+    input_max = torch.tensor([2]).to(DEVICE)
     # z and x
     # input_min = torch.tensor([-1]).to(DEVICE)
     # input_max = torch.tensor([1]).to(DEVICE)
     # round
-    input_min = torch.tensor([0]).to(DEVICE)
-    input_max = torch.tensor([2*np.pi-0.001]).to(DEVICE)
+    # input_min = torch.tensor([0]).to(DEVICE)
+    # input_max = torch.tensor([2*np.pi-0.001]).to(DEVICE)
 
     setup_dict = {
         "bound_method": bound_method,

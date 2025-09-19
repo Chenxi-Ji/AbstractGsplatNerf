@@ -15,14 +15,19 @@ venv/
 Thumbs.db
 
 #Content
-AbstractImages/*
-!AbstractImages/output/*
+Outputs/*
+!Outputs/AbstractImages/.gitkeep
+!Outputs/AbstractGif/.gitkeep
 
 DownStreamModel/*
 !DownStreamModel/.gitkeep
 
 auto_LiRPA/*
 !auto_LiRPA/.gitkeep
+
+build/*
+
+dist/*
 
 nerfstudio/*
 !nerfstudio/outputs/

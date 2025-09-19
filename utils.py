@@ -101,6 +101,11 @@ def convert_input_to_translation(input, trans, type):
             xz = r * torch.cos(theta_v)
             z = xz * torch.sin(theta_h)
             x = -xz * torch.cos(theta_h)
+        elif type == "x":
+
+            x = input[:, 0]+trans[0]
+            y = torch.ones_like(x)*trans[1]
+            z = torch.ones_like(x)*trans[2]
         elif type == "y":
 
             y = input[:, 0]+trans[1]
@@ -261,39 +266,79 @@ def alpha_blending_interval(alpha_lb, alpha_ub, colors):
     color_alpha_out_ub = torch.cat([color_out_ub,alpha_out_ub], dim = -1)
     return color_alpha_out_lb, color_alpha_out_ub
 
-def generate_samples(input_lb, input_ub, input_ref, N_sample=5):
+def generate_single(input_lb, input_ub, input_ref, N_sample=5):
     assert torch.all(input_lb <= input_ub), "input_lb must be <= input_ub"
 
     N = input_lb.shape[1]  # number of dimensions
 
+    return input_ref
+
+def generate_samples(input_lb, input_ub, input_ref, N_sample=5, include_given=True):
+    assert torch.all(input_lb <= input_ub), "input_lb must be <= input_ub"
+
+    N = input_lb.shape[1]  # number of dimensions
+    
     # Generate uniform random samples within bounds
     rand_vals = torch.rand((N_sample, N), device=input_lb.device)
     samples = input_lb + (input_ub - input_lb) * rand_vals
 
     # Concatenate with bounds
-    input_samples = torch.cat([input_ref, input_lb, input_ub, samples], dim=0) #(N_sample+3, N)
+    if include_given:
+        input_samples = torch.cat([input_ref, input_lb, input_ub, samples], dim=0) #(N_sample+3, N)
+    else:
+        input_samples = torch.cat([samples], dim=0) #(N_sample, N)
 
     return input_samples
 
-def generate_fixed_poses(camera_pose, transform_hom, scale):
 
-    tmp = np.linalg.inv(np.array([
-        [1,0,0,0],
-        [0,1,0,0],
-        [0,0,1,0],
-        [0,0,0,1]
-    ]))
-    camera_pose_transformed = tmp@transform_hom@camera_pose
-    camera_pose_transformed = camera_pose_transformed[:3,:]
-    camera_pose_transformed[:3,3] *= scale 
-    camera_pose_transformed = torch.Tensor(camera_pose_transformed)[None]
+def generate_trajectory(input_lb, input_ub, input_ref, N_sample=20, N_waypoints=3):
+    """
+    Generate a trajectory (smooth-ish path) within bounds.
+    - input_lb: (1, d) lower bound
+    - input_ub: (1, d) upper bound
+    - input_ref: (1, d) reference point
+    - N_sample: number of points in trajectory
+    - N_waypoints: number of random waypoints (in addition to start & end)
+    """
+    d = input_lb.shape[1]
 
-    # camera_to_worlds = torch.Tensor(camera_pose)[None].to(means.device)
-    camera_to_world = torch.Tensor(camera_pose_transformed)[None]
+    # Random start and end inside bounds
+    start = input_lb + (input_ub - input_lb) * torch.rand((1, d), device=input_lb.device)
+    end   = input_lb + (input_ub - input_lb) * torch.rand((1, d), device=input_lb.device)
 
-    view_mats = transfer_c2w_to_w2c(camera_pose_transformed)
-    
-    return view_mats, view_mats, view_mats
+    # Random intermediate waypoints
+    waypoints = [start]
+    for _ in range(N_waypoints):
+        wp = input_lb + (input_ub - input_lb) * torch.rand((1, d), device=input_lb.device)
+        waypoints.append(wp)
+    waypoints.append(end)
+
+    # Concatenate waypoints
+    waypoints = torch.cat(waypoints, dim=0)  # (N_waypoints+2, d)
+
+    # Allocate trajectory
+    traj = []
+
+    # Divide samples approximately evenly across each segment
+    seg_lengths = torch.norm(waypoints[1:] - waypoints[:-1], dim=1)
+    seg_ratios = seg_lengths / seg_lengths.sum()
+    seg_counts = (seg_ratios * N_sample).long()
+    seg_counts[seg_counts == 0] = 1  # at least one per segment
+
+    # Build trajectory by interpolating segments
+    for i in range(len(waypoints)-1):
+        n = seg_counts[i].item()
+        alpha = torch.linspace(0, 1, steps=n, device=input_lb.device).unsqueeze(1)
+        seg_points = (1-alpha) * waypoints[i] + alpha * waypoints[i+1]
+        traj.append(seg_points)
+
+    traj = torch.cat(traj, dim=0)
+
+    # Concatenate with reference point
+    input_samples = torch.cat([input_ref, traj], dim=0)
+
+    return input_samples
+
 
 def generate_bound(input_min, input_max, partition_per_dim=2, selection_per_dim=None):
     if selection_per_dim is None:
