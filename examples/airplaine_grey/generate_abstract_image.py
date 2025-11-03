@@ -60,10 +60,9 @@ def compute_and_save_abstract_images(save_folder_full):
 if __name__ == '__main__':
     # Folder where images are saved
     object_name = "airplane_grey"
-    domain_type = "y"
+    domain_type = "x"
 
     script_dir = os.path.dirname(os.path.realpath(__file__))
-    save_folder_path = "./Outputs/AbstractImages/"+object_name+"/"+domain_type
+    save_folder_path = "../../Outputs/AbstractImages/"+object_name+"/"+domain_type
     save_folder_full =  os.path.join(script_dir, save_folder_path)
     compute_and_save_abstract_images(save_folder_full)
-    

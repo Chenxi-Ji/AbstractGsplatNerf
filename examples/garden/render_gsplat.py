@@ -1,6 +1,6 @@
 import os 
-import sys
 import json 
+import sys
 
 import time
 import numpy as np 
@@ -22,7 +22,6 @@ from utils import dir_to_rpy_and_rot, generate_samples, generate_trajectory,gene
 from utils import convert_input_to_rot
 
 from render_functions import GsplatRGBOrigin, TransferModelOrigin
-
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -95,13 +94,24 @@ def main(setup_dict):
         bg_color = torch.from_numpy(bg_img/255).to(DEVICE)  # shape: (H, W, 3)
     
     # Generate Rotation Matrix
-    start_arr = np.array([-np.cos(np.deg2rad(20)), np.sin(np.deg2rad(20)), 0.0])*6
+    start_arr = np.array([2.65048, 3.30613, -0.06412])
     end_arr = np.array([0.0, 0.0, 0.0])
     rot = dir_to_rpy_and_rot(start_arr, end_arr)
     rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
-    trans = np.array([-np.cos(np.deg2rad(20)), np.sin(np.deg2rad(20)), 0.0])*6
+    trans = start_arr-end_arr
     trans = torch.from_numpy(trans).to(device=DEVICE, dtype=DTYPE)
-    # print("rot:",rot)
+
+    rot = torch.tensor([[-0.7935755888336996,
+                        -0.12208936195072784,
+                        0.5960972844307469,],
+                        [0.5802594175261779,
+                        -0.4466947885635106,
+                        0.6810013026730427],
+                        [0.1831305359011091,
+                        0.8863170728179982,
+                        0.42532958191490505]]).to(device=DEVICE, dtype=DTYPE)
+    print("trans",trans)
+    print("rot:",rot)
 
     input_ref = (input_min + input_max)/2
     input_min, input_max, input_ref = input_min.unsqueeze(0), input_max.unsqueeze(0), input_ref.unsqueeze(0) #[1, N]
@@ -111,7 +121,7 @@ def main(setup_dict):
     
 
     inputs_queue = [input_ref for input_ref in inputs_ref] #list(zip(inputs_lb, inputs_ub, inputs_ref))
-   
+
     absimg_num = 0
 
     # initialize tqdm without a fixed total
@@ -154,12 +164,11 @@ def main(setup_dict):
                 ref_tile_np = ref_tile.squeeze(0).detach().cpu().numpy()
                 img_ref[hl:hu, wl:wu, :] = ref_tile_np
                 
-
         if save_ref:
             img_ref= (img_ref.clip(min=0.0, max=1.0)*255).astype(np.uint8)
             res_ref = Image.fromarray(img_ref)
             res_ref.save(f'{save_folder_full}/ref_{absimg_num}.png')
-            print(f"Saved Reference Image: {save_folder_full}/ref_{absimg_num}.png")
+            print("saved ref image:", f'{save_folder_full}/ref_{absimg_num}.png')
 
         absimg_num+=1
 
@@ -178,17 +187,17 @@ if __name__=='__main__':
     # Setup Parameters
     bound_method = 'forward'
     render_method = 'gsplat_rgb'
-    object_name = "airplane_grey"
+    object_name = "garden"
     
     width = 64*2#80#
     height = 64*2#80#
     f = 80*2#100#
-    tile_size = 64 #80
+    tile_size = 16 #80
 
     partition_per_dim = 20000##5000
     selection_per_dim = 200
 
-    scene_path = 'outputs/airplane_grey/splatfacto/2025-08-02_025446'
+    scene_path = 'outputs/garden/splatfacto/2025-09-05_011240'
     checkpoint_filename = "step-000299999.ckpt"
 
     bg_img_path = None#"./BgImg/mountain.jpg"

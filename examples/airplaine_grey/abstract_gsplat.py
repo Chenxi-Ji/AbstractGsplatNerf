@@ -303,9 +303,10 @@ if __name__=='__main__':
     render_method = 'gsplat_rgb'
     object_name = "airplane_grey"
     
-    width = 64*2#80#
-    height = 64*2#80#
-    f = 80*2#100#
+    factor = 8
+    width = 64*factor#80#
+    height = 64*factor#80#
+    f = 80*factor#100#
     tile_size = 6*2 #4
 
     partition_per_dim = 20000##5000
@@ -316,7 +317,7 @@ if __name__=='__main__':
 
     bg_img_path = None#"./BgImg/mountain.jpg"
 
-    domain_type = "round"
+    domain_type = "x"
 
     save_folder = "Outputs/AbstractImages/"+object_name+"/"+domain_type
     save_ref = True
@@ -333,11 +334,11 @@ if __name__=='__main__':
     # input_min = torch.tensor([-2]).to(DEVICE)
     # input_max = torch.tensor([2]).to(DEVICE)
     # z and x
-    # input_min = torch.tensor([-1]).to(DEVICE)
-    # input_max = torch.tensor([1]).to(DEVICE)
+    input_min = torch.tensor([-1]).to(DEVICE)
+    input_max = torch.tensor([1]).to(DEVICE)
     # round
-    input_min = torch.tensor([0]).to(DEVICE)
-    input_max = torch.tensor([2*np.pi-0.001]).to(DEVICE)
+    # input_min = torch.tensor([0]).to(DEVICE)
+    # input_max = torch.tensor([2*np.pi-0.001]).to(DEVICE)
 
     setup_dict = {
         "bound_method": bound_method,
