@@ -102,12 +102,16 @@ class GsplatRGBOrigin(nn.Module):
     def update_tile(self, tile_dict):
         self.tile_dict = tile_dict
 
-    def render_alpha(self, pose, scene_dict, eps_max=1.0):
 
-        # Extract Parameters
+    def render_alpha(self, pose, scene_dict, eps_max=1.0):
+        # --- Default to full-frame if tile_dict is missing ---
+        if not hasattr(self, "tile_dict") or self.tile_dict is None:
+            hl, wl, hu, wu = 0, 0, self.camera_dict["height"], self.camera_dict["width"]
+        else:
+            hl, wl, hu, wu = (self.tile_dict[key] for key in ["hl", "wl", "hu", "wu"])
+
         fx, fy, width, height = (self.camera_dict[key] for key in ["fx", "fy", "width", "height"])
         means_hom_world, Ms_world, opacities  = (scene_dict[key] for key in ["means_hom_world", "Ms_world", "opacities"])
-        hl,wl,hu,wu = (self.tile_dict[key] for key in ["hl", "wl", "hu", "wu"])
 
         N = opacities.size(0)
         DEVICE = opacities.device
@@ -211,17 +215,155 @@ class GsplatRGBOrigin(nn.Module):
 
         return alpha # [1, TH, TW, N, 1]
 
-    def alpha_blending(self, alpha, colors):
-        alpha_shifted = torch.cat([torch.zeros_like(alpha[:,:,:,0:1,:], dtype=alpha.dtype), alpha[:,:,:,:-1,:]], dim=-2)
-        transmittance = regulate(torch.cumprod((1-alpha_shifted), dim=-2))
 
-        alpha_combined= regulate((alpha*transmittance).sum(dim=-2, keepdim=True)) # [1, TH, TW, 1, 1]
-        colors_combined = regulate((alpha*transmittance*colors).sum(dim=-2, keepdim=True)) # [1, TH, TW, 1, 3]
+    # def render_alpha(self, pose, scene_dict, eps_max=1.0):
 
-        return colors_combined, alpha_combined
+    #     # Extract Parameters
+    #     fx, fy, width, height = (self.camera_dict[key] for key in ["fx", "fy", "width", "height"])
+    #     means_hom_world, Ms_world, opacities  = (scene_dict[key] for key in ["means_hom_world", "Ms_world", "opacities"])
+    #     hl,wl,hu,wu = (self.tile_dict[key] for key in ["hl", "wl", "hu", "wu"])
+
+    #     N = opacities.size(0)
+    #     DEVICE = opacities.device
+    #     pose = pose.to(DEVICE)
+
+    #     # Generate Mesh Grid
+    #     pix_coord = torch.stack(torch.meshgrid(torch.arange(wl,wu), torch.arange(hl,hu), indexing='xy'), dim=-1)
+    #     pix_coord = pix_coord.unsqueeze(0).to(DEVICE)  # [1, TH, TW, 2]
+
+    #     # Step 1: Convert from World Coordinates to Camera Coordinates
+    #     means_hom_cam = torch.matmul(pose, means_hom_world[None, :, :].transpose(-1,-2)).transpose(-1,-2)    # [1, N, 4]
+    #     means_cam = means_hom_cam[:, :, :3] # [1, N, 3]
+
+    #     us = means_cam[:, :, 0]
+    #     vs = means_cam[:, :, 1]
+    #     depth = means_cam[:, :,2] # [1, N]
+
+    #     R_pose = pose[:, :3, :3]  # [1, 3, 3]
+    #     Ms_cam = R_pose[:, None, :, :]@Ms_world[None, :, :, :] # [1, N, 3, 3]
+
+    #     # Step 2: Prepare Matrix K and J for Coordinate Transformation
+    #     Ks = torch.Tensor([[
+    #         [fx, 0, width/2],
+    #         [0, fy, height/2],
+    #         [0,0,1]
+    #     ]]).to(DEVICE) # [1, 3, 3]
+
+    #     # tu = torch.min(depth*lim_u, torch.max(-depth*lim_u, us))
+    #     # tv = torch.min(depth*lim_v, torch.max(-depth*lim_v, vs))
+
+    #     J_00 = fx * depth # [1, N]
+    #     J_02 = -fx * us 
+    #     J_11 = fy * depth
+    #     J_12 = -fy * vs
+
+    #     J_00 = fx * depth # [1, N]
+    #     J_02 = -fx * us #tu
+    #     J_11 = fy * depth
+    #     J_12 = -fy * vs#tv
+
+    #     J_row0 = torch.stack([J_00, torch.zeros_like(J_00), J_02], dim=-1)  # [1, N, 3]
+    #     J_row1 = torch.stack([torch.zeros_like(J_00), J_11, J_12], dim=-1)  # [1, N, 3]
+    #     Js = torch.stack([J_row0, J_row1], dim=-2) # [1, N, 2, 3]
+
+    #     # Step 3: Convert from Camera Coodinates to Pixel Coordinates
+    #     means_hom_pix = means_cam @ Ks.transpose(1, 2) # [1, N, 3]
+    #     means_pix = means_hom_pix[:, :, :2] # [1, N, 2]
+
+    #     Ms_pix = Js@Ms_cam # [1, N, 2, 3]
+
+    #     # covs_pix = Ms_pix@Ms_pix.transpose(-1,-2) # [1, N, 2, 2]
+    #     # covs_pix_00 = covs_pix[:, :, 0, 0] # [1, N]
+    #     # covs_pix_01 = covs_pix[:, :, 0, 1] # [1, N]
+    #     # covs_pix_11 = covs_pix[:, :, 1, 1] # [1, N]
+
+    #     # covs_pix_det = (covs_pix_00*covs_pix_11)-covs_pix_01*covs_pix_01
+
+    #     Ms_pix_00 = Ms_pix[:, :, 0, 0] # [1, N]
+    #     Ms_pix_01 = Ms_pix[:, :, 0, 1]
+    #     Ms_pix_02 = Ms_pix[:, :, 0, 2]
+    #     Ms_pix_10 = Ms_pix[:, :, 1, 0]
+    #     Ms_pix_11 = Ms_pix[:, :, 1, 1]
+    #     Ms_pix_12 = Ms_pix[:, :, 1, 2]
+
+    #     covs_pix_det = (Ms_pix_00*Ms_pix_11-Ms_pix_01*Ms_pix_10)**2+(Ms_pix_00*Ms_pix_12-Ms_pix_02*Ms_pix_10)**2+(Ms_pix_01*Ms_pix_12-Ms_pix_02*Ms_pix_11)**2
+    #     # covs_pix_det += 1e-12 # May cause error
+
+    #     covs_pix_00 = Ms_pix_00**2+Ms_pix_01**2+Ms_pix_02**2
+    #     covs_pix_01 = Ms_pix_00*Ms_pix_10+Ms_pix_01*Ms_pix_11+Ms_pix_02*Ms_pix_12
+    #     covs_pix_11 = Ms_pix_10**2+Ms_pix_11**2+Ms_pix_12**2
+
+    #     # conics_pix_00 = covs_pix_11/covs_pix_det # [1, N]
+    #     # conics_pix_01 = -covs_pix_01/covs_pix_det
+    #     # conics_pix_11 = covs_pix_00/covs_pix_det
+
+    #     # conics_pix_0 = torch.stack([conics_pix_00, conics_pix_01], dim=-1) # [1, N, 2]
+    #     # conics_pix_1 = torch.stack([conics_pix_01, conics_pix_11], dim=-1)
+        
+    #     # conics_pix = torch.stack([conics_pix_0, conics_pix_1], dim=-2) # [1, N, 2, 2]
+
+    #     # Step 4: Compute Probability Density and Alpha at Pixel Coordinates
+    #     pix_diff = (pix_coord[:, :, :, None, :]*depth[:, None, None, :, None]-means_pix[:, None, None, :, :])*depth[:, None, None, :, None] #[1, TH, TW, N, 2]
+        
+    #     pix_diff_0 = pix_diff[:, :, :, :, 0] #[1, TH, TW, N]
+    #     pix_diff_1 = pix_diff[:, :, :, :, 1]
+
+    #     # prob_density = pix_diff_0**2*conics_pix_00[:, None, None, :]+2*pix_diff_0*pix_diff_1*conics_pix_01[:, None, None, :]+pix_diff_1**2*conics_pix_11[:, None, None, :] #[1, TH, TW, N]
+    #     # prob_density = 1/covs_pix_det[:, None, None, :]*(pix_diff_0**2*covs_pix_11[:, None, None, :]-2*pix_diff_0*pix_diff_1*covs_pix_01[:, None, None, :]+pix_diff_1**2*covs_pix_00[:, None, None, :]) #[1, TH, TW, N]
+        
+    #     prob_density = 1/covs_pix_det[:, None, None, :]*(\
+    #     (pix_diff_0*Ms_pix_10[:, None, None, :]-pix_diff_1*Ms_pix_00[:, None, None, :])**2+\
+    #     (pix_diff_0*Ms_pix_11[:, None, None, :]-pix_diff_1*Ms_pix_01[:, None, None, :])**2+\
+    #     (pix_diff_0*Ms_pix_12[:, None, None, :]-pix_diff_1*Ms_pix_02[:, None, None, :])**2) #[1, TH, TW, N]
+
+    #     prob_density = prob_density.unsqueeze(-1) #[1, TH, TW, N, 1]
+
+    #     # return prob_density.unsqueeze(-1)
+
+    #     alpha = opacities[None, None, None, :, :]*torch.exp(-1/2*prob_density) # [1, TH, TW, N, 1]
+    #     alpha = -torch.nn.functional.relu(-alpha+eps_max)+eps_max 
+
+    #     return alpha # [1, TH, TW, N, 1]
+
+    # def alpha_blending(self, alpha, colors):
+    #     alpha_shifted = torch.cat([torch.zeros_like(alpha[:,:,:,0:1,:], dtype=alpha.dtype), alpha[:,:,:,:-1,:]], dim=-2)
+    #     transmittance = regulate(torch.cumprod((1-alpha_shifted), dim=-2))
+
+    #     alpha_combined= regulate((alpha*transmittance).sum(dim=-2, keepdim=True)) # [1, TH, TW, 1, 1]
+    #     colors_combined = regulate((alpha*transmittance*colors).sum(dim=-2, keepdim=True)) # [1, TH, TW, 1, 3]
+
+    #     return colors_combined, alpha_combined
     
+    # def render_color(self, pose):
+    #     hl,wl,hu,wu = (self.tile_dict[key] for key in ["hl", "wl", "hu", "wu"])
+    #     bg_color = self.bg_color[hl:hu, wl:wu, :].view(1, hu-hl, wu-wl, 1, 3)
+
+    #     if self.scene_dict_sorted is None:
+    #         return bg_color.squeeze(-2)
+        
+    #     else:
+    #         N = self.scene_dict_sorted["opacities"].size(0)
+    #         DEVICE = self.scene_dict_sorted["opacities"].device
+
+    #         alpha = self.render_alpha(pose, self.scene_dict_sorted) # [1, TH, TW, N, 1]
+    #         colors = self.scene_dict_sorted["colors"].view(1, 1, 1, N, 3).repeat(1, hu-hl, wu-wl, 1, 1)
+
+    #         ones = torch.ones((1, hu-hl, wu-wl, 1, 1), device=DEVICE)
+    #         alpha = torch.cat([alpha, ones], dim=-2) # [1, TH, TW, N+1, 1]
+    #         #print(colors.shape, bg_color.shape)
+    #         colors = torch.cat([colors, bg_color], dim=-2) # [1, TH, TW, N+1, 1]
+
+    #         colors_combined, alpha_combined = self.alpha_blending(alpha, colors)
+
+    #         return colors_combined.squeeze(-2)
+
     def render_color(self, pose):
-        hl,wl,hu,wu = (self.tile_dict[key] for key in ["hl", "wl", "hu", "wu"])
+    # Default to full-frame if tile_dict is missing
+        if not hasattr(self, "tile_dict") or self.tile_dict is None:
+            hl, wl, hu, wu = 0, 0, self.camera_dict["height"], self.camera_dict["width"]
+        else:
+            hl, wl, hu, wu = (self.tile_dict[key] for key in ["hl", "wl", "hu", "wu"])
+
         bg_color = self.bg_color[hl:hu, wl:wu, :].view(1, hu-hl, wu-wl, 1, 3)
 
         if self.scene_dict_sorted is None:
@@ -239,9 +381,11 @@ class GsplatRGBOrigin(nn.Module):
             #print(colors.shape, bg_color.shape)
             colors = torch.cat([colors, bg_color], dim=-2) # [1, TH, TW, N+1, 1]
 
-            colors_combined, alpha_combined = self.alpha_blending(alpha, colors)
+            colors_combined = alpha_blending(alpha, colors, "fast")
 
             return colors_combined.squeeze(-2)
+
+
         
     def forward(self, input):
         pose = input
