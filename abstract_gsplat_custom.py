@@ -139,7 +139,7 @@ def polar_to_cartesian(angle_deg, distance):
 
 def make_scene_from_splats(splats, device, dtype=torch.float32, sigma_min=1e-2, assume_scales_logspace=False):
     """
-    Build scene_dict_all compatible with your renderer from a list of splat dicts.
+    Build scene_dict_all compatible with renderer from a list of splat dicts.
     Each splat: { 'angle' or 'pos', 'distance', 'sigma', 'color', 'opacity', optional 'z' }
     """
     means_list, quats_list, opac_list, scales_list, colors_list = [], [], [], [], []
@@ -147,8 +147,8 @@ def make_scene_from_splats(splats, device, dtype=torch.float32, sigma_min=1e-2, 
         if 'pos' in s:
             x, y = s['pos'][:2]
         else:
-            x, y = polar_to_cartesian(s['angle'], s.get('distance', 1.0))
-        z = s.get('z', 0.0)
+            x, y = polar_to_cartesian(s['angle'], s.get('distance', 1.0)) #convert from angle / distance to cartesian coords
+        z = s.get('z', 0.0) # set the z to zero for right now
         means_list.append([x, y, z])
         quats_list.append([0.0, 0.0, 0.0, 1.0])  # identity quaternion
         opac_list.append(float(s.get('opacity', 1.0)))
@@ -231,10 +231,6 @@ def main(setup_dict):
         bg_color = torch.from_numpy(bg_img/255).to(DEVICE)  # shape: (H, W, 3)
     
     # Generate Rotation Matrix
-    # Camera setup: camera looks along z-axis at origin
-    # Camera will move perpendicular to z-axis (along x or y axis)
-    # Camera distance: larger = further back (sees more), smaller = closer (zoomed in)
-    # camera_z_distance is already extracted from setup_dict above
     start_arr = np.array([0.0, 0.0, camera_z_distance])  # Camera position (at fixed z distance)
     end_arr = np.array([0.0, 0.0, 0.0])  # Look at origin
     rot = dir_to_rpy_and_rot(start_arr, end_arr)
@@ -366,17 +362,31 @@ def generate_partitions(distance, distance_partitions, fov, fov_partitions):
             angle_ub = angle_center + angle_bounds / 2
             partition_bounds.append((dist_lb, dist_ub, angle_lb, angle_ub))
 
+        print(f"partitions{partitions}")
+        print(f"partition shape: {partitions.shape}")
+
         return partitions, distance_bounds, angle_bounds, partition_bounds
 
 
-def generate_splats():
+def generate_splats(partitions):
+
     my_splats = []
-    my_splats.append({
-        'pos': [0.0, 0.0, 0.0],  # Directly specify position at origin
-        'sigma': 1,
-        'color': (1.0, 0.0, 0.0),  # Red color for visibility
-        'opacity': 0.9
-    })
+
+    A = np.random.rand()
+    B = np.random.rand()
+    C = np.random.rand()
+
+
+    #TODO #Should be ok to index the first dim (double check if things go wrong)
+    for partition in partitions:
+
+        my_splats.append({
+            'distance': partition[0],  # Directly specify position at origin
+            'angle': partition[1],
+            'sigma': 1,
+            'color': (A, B, C),  # Red color for visibility
+            'opacity': 0.9
+        })
     return my_splats
 
 
@@ -400,6 +410,7 @@ def render_partitions(setup_dict_base, distance, distance_partitions, fov, fov_p
     partitions, distance_bounds, angle_bounds, partition_bounds = generate_partitions(
         distance, distance_partitions, fov, fov_partitions
     )
+    my_splats = generate_splats(partitions=partitions)
     
     print(f"Generated {len(partitions)} partitions")
     print(f"Distance bounds: {distance_bounds:.4f}, Angle bounds: {angle_bounds:.4f} rad ({np.degrees(angle_bounds):.2f} deg)")
@@ -420,9 +431,11 @@ def render_partitions(setup_dict_base, distance, distance_partitions, fov, fov_p
             # Set input bounds to angle bounds
             setup_dict["input_min"] = torch.tensor([angle_lb]).to(DEVICE)
             setup_dict["input_max"] = torch.tensor([angle_ub]).to(DEVICE)
-            setup_dict["domain_type"] = "round"  # or "round" depending on your needs
+            setup_dict["domain_type"] = "round" 
             # Update save folder to include partition info
             setup_dict["save_folder"] = f"{setup_dict_base['save_folder']}/partition_{idx:03d}_angle_{np.degrees(angle_lb):.1f}to{np.degrees(angle_ub):.1f}"
+
+            setup_dict["splats"] = my_splats # redefine the splats based on the partitions
         else:
             # Partition by both distance and angle - would need 2D input support
             # This would require a custom domain_type or using "3" type
@@ -480,6 +493,30 @@ if __name__=='__main__':
         'color': (1.0, 0.0, 0.0),  # Red color for visibility
         'opacity': 0.9
     })
+
+    my_splats.append({
+        'distance': 1,  # Directly specify position at origin
+        'angle': 180,
+        'sigma': 1,
+        'color': (0.0, 1.0, 0.0),  # Red color for visibility
+        'opacity': 0.9
+    })
+
+    my_splats.append({
+        'distance': 1,  # Directly specify position at origin
+        'angle': 0,
+        'sigma': 1,
+        'color': (0.0, 0.0, 1.0),  # Red color for visibility
+        'opacity': 0.9
+    })
+
+    # my_splats.append({
+    #     'pos': [2.0, 0.0, 0.0],  # Directly specify position at origin
+    #     'sigma': 1,
+    #     'color': (0.0, 1.0, 0.0),  # Red color for visibility
+    #     'opacity': 0.9
+    # })
+
 
     setup_dict = {
         "bound_method": bound_method,
