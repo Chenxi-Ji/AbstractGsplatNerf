@@ -154,8 +154,8 @@ def make_scene_from_splats(splats, device, dtype=torch.float32, sigma_min=1e-2, 
         opac_list.append(float(s.get('opacity', 1.0)))
         sigma = s.get('sigma', 0.5)
         if isinstance(sigma, (float, int)):
-            sx = sy = max(sigma, sigma_min)
-            sz = sigma_min
+            sx = sy = sz = max(sigma, sigma_min)
+            # sz = sigma_min
         else:
             sx, sy, sz = [max(float(v), sigma_min) for v in sigma]
         scales_list.append([sx, sy, sz])
@@ -200,6 +200,17 @@ def main(setup_dict):
     #     print(f"Cleared existing output directory: {save_folder_full}")
     # os.makedirs(save_folder_full)
 
+
+    #TODO make this autoclear feature work for partitions and non partitions
+    # outputs_folder = os.path.join(script_dir, "Outputs")
+    # if os.path.exists(outputs_folder):
+    #     shutil.rmtree(outputs_folder) 
+    #     # os.removedirs(outputs_folder)
+
+
+    # # if not os.path.exists(save_folder_full):
+    # os.makedirs(save_folder_full)
+
     # Generate synthetic scene from splats
     scene_dict_all = make_scene_from_splats(splats, device=DEVICE, assume_scales_logspace=False)
     means = scene_dict_all['means']
@@ -230,17 +241,55 @@ def main(setup_dict):
         bg_img = np.array(bg_img, dtype=np.float32)  # shape: (H, W, 3)
         bg_color = torch.from_numpy(bg_img/255).to(DEVICE)  # shape: (H, W, 3)
     
+
+    #TODO make this dynamic.
+    #Initial gaussian positoin
+    pos_start = np.array([0.0, 0.0, 0.0])
+    pos_end = np.array([2.0, 0.0, 0.0])
+
+    gs_rot = dir_to_rpy_and_rot(pos_start, pos_end)
+    # gs_rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
+    gs_trans = np.array([0.0, 0.0, 2])
+
+    gs_transform_matrix = np.identity(4)
+    # gs_transform_matrix[:3, :3] = gs_rot
+    gs_transform_matrix[:3, 3] = gs_trans
+
+    print(f"gs transformation matrix: {gs_transform_matrix}")
+
+
+
+
+
+
     # Generate Rotation Matrix
-    start_arr = np.array([0.0, 0.0, camera_z_distance])  # Camera position (at fixed z distance)
-    end_arr = np.array([0.0, 0.0, 0.0])  # Look at origin
+    start_arr = np.array([0.0, 0.0, camera_z_distance])  
+    end_arr = np.array([0.0, 0.0, camera_z_distance])  
     rot = dir_to_rpy_and_rot(start_arr, end_arr)
-    rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
+    # rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
     # Base translation: 
     # trans[0] = base x position (0 for x-axis movement)
     # trans[1] = base y position (0 for y-axis movement)  
     # trans[2] = fixed z distance from origin (camera looks along z-axis)
-    trans = np.array([0.0, 0.0, camera_z_distance])  # Fixed z distance, x and y will vary based on domain_type
+    trans = np.array([0.0, 0.0, camera_z_distance])  
+    # trans = torch.from_numpy(trans).to(device=DEVICE, dtype=DTYPE)
+
+    camera_transformation = np.identity(4)
+    camera_transformation[:3, :3] = rot
+    camera_transformation[:3, 3] = trans
+
+    # camera_transformation = camera_transformation @ np.linalg.inv(gs_transform_matrix)
+    # camera_transformation = np.linalg.inv(gs_transform_matrix)
+    camera_transformation = gs_transform_matrix
+
+
+    rot = camera_transformation[:3, :3]
+    trans = camera_transformation[:3, 3]
+    rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
     trans = torch.from_numpy(trans).to(device=DEVICE, dtype=DTYPE)
+
+
+
     
     # Identity transform and scale for synthetic scenes
     transform_hom = torch.eye(4, dtype=DTYPE, device=DEVICE)
@@ -468,7 +517,7 @@ if __name__=='__main__':
 
     # Choose "x" to move along x-axis, or "y" to move along y-axis
     # Camera will be at fixed z distance (trans[2]) and move perpendicular to z-axis
-    domain_type = "x"  # Camera moves along x-axis (perpendicular to z-axis)
+    domain_type = "z"  # Camera moves along x-axis (perpendicular to z-axis)
 
     save_folder = "Outputs/AbstractImages/"+object_name+"/"+domain_type
     save_ref = True
@@ -478,37 +527,46 @@ if __name__=='__main__':
 
     # Camera moves along x-axis (perpendicular to z-axis)
     # Range: from -2 to +2 units along x-axis
-    input_min = torch.tensor([-2.0]).to(DEVICE)
-    input_max = torch.tensor([2.0]).to(DEVICE)
+    input_min = torch.tensor([0.0]).to(DEVICE)
+    input_max = torch.tensor([7.0]).to(DEVICE)
 
     # Camera distance from origin (larger = further back, sees more)
-    camera_z_distance = 10.0  # Increase this to zoom out more (try 15.0, 20.0, etc.)
+    camera_z_distance = 10.0  
 
     # Create synthetic splats - centered at origin
     my_splats = []
     # Place gaussian at origin (0, 0, 0)
     my_splats.append({
-        'pos': [0.0, 0.0, 0.0],  # Directly specify position at origin
+        'pos': [0.0, 2.0, 3.0],  
         'sigma': 1,
-        'color': (1.0, 0.0, 0.0),  # Red color for visibility
+        'color': (1.0, 0.0, 0.0), 
         'opacity': 0.9
     })
 
     my_splats.append({
-        'distance': 1,  # Directly specify position at origin
+        'distance': 1,  
         'angle': 180,
         'sigma': 1,
-        'color': (0.0, 1.0, 0.0),  # Red color for visibility
+        'color': (0.0, 1.0, 0.0),  
         'opacity': 0.9
     })
 
     my_splats.append({
-        'distance': 1,  # Directly specify position at origin
+        'distance': 1,  
         'angle': 0,
         'sigma': 1,
-        'color': (0.0, 0.0, 1.0),  # Red color for visibility
+        'color': (0.0, 0.0, 1.0),  
         'opacity': 0.9
     })
+
+    # my_splats.append({
+    # 'distance': 2.0,
+    # 'angle': 90,
+    # 'z': -1.0,  # Below the xy-plane
+    # 'sigma': [1.5, 1.5, 0.3],  # Wide in x/y, thin in z
+    # 'color': (1.0, 0.5, 0.0),  # Orange
+    # 'opacity': 0.8
+    # })
 
     # my_splats.append({
     #     'pos': [2.0, 0.0, 0.0],  # Directly specify position at origin
@@ -546,7 +604,7 @@ if __name__=='__main__':
     # print(f"Running Time:{(end_time-start_time)/60:.4f} min")
 
     # Option 2: Render multiple partitions based on FOV
-    use_partitions = True
+    use_partitions = False
     if use_partitions:
         fov_degrees = 90  # Total field of view in degrees
         fov_radians = np.deg2rad(fov_degrees)
