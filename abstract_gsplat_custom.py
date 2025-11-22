@@ -249,7 +249,7 @@ def main(setup_dict):
 
     gs_rot = dir_to_rpy_and_rot(pos_start, pos_end)
     # gs_rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
-    gs_trans = np.array([0.0, 0.0, 2])
+    gs_trans = np.array([0.0, 0.0, 0.0])
 
     gs_transform_matrix = np.identity(4)
     # gs_transform_matrix[:3, :3] = gs_rot
