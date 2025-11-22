@@ -105,7 +105,7 @@ def convert_input_to_translation(input, trans, type):
 
             x = input[:, 0]+trans[0]
             y = torch.ones_like(x)*trans[1]
-            z = torch.ones_like(x)*trans[2]
+            z = torch.ones_like(x)*trans[2] + trans[2]
         elif type == "y":
 
             y = input[:, 0]+trans[1]
@@ -113,7 +113,8 @@ def convert_input_to_translation(input, trans, type):
             z = torch.ones_like(y)*trans[2]
         elif type == "z":
 
-            z = input[:, 0]
+            z = input[:, 0] + trans[2]
+            # z += torch.ones_like(z)*trans[2]
             x = torch.ones_like(z)*trans[0]
             y = torch.ones_like(z)*trans[1]
         elif type == "yaw":
@@ -133,6 +134,12 @@ def convert_input_to_translation(input, trans, type):
             xz = torch.sqrt(trans[0]**2+trans[2]**2)
             z = -xz * torch.sin(yaw+initial_yaw)
             x = xz * torch.cos(yaw+initial_yaw)
+        elif type == "scene_perturbation":
+            x = input[:, 0]*trans[0]
+
+            z = torch.ones_like(x)*trans[2]
+            y = torch.ones_like(x)*trans[1]
+
 
         return torch.stack([x, y, z], dim=-1)
 
@@ -140,9 +147,19 @@ def convert_input_to_rot(input, trans, type):
     translation = convert_input_to_translation(input, trans, type)
     translation = translation.detach().cpu().numpy().squeeze(0) #[3, ]
 
-    center = np.zeros((3,))
+    center = np.zeros((3,))  # Camera always looks at origin [0, 0, 0]
 
-    rot = dir_to_rpy_and_rot(translation, center)
+    # For "x" and "y" domains, use rotation from original camera position
+    # This keeps the same view angle (facing origin) while allowing translation
+    if type == "x" or type == "y":
+        # Use rotation from original camera position [0, 0, trans[2]] to origin
+        # This ensures camera always faces origin with same view angle
+        original_z = trans[2].detach().cpu().numpy().item() if isinstance(trans, torch.Tensor) else trans[2]
+        fixed_position = np.array([0.0, 0.0, original_z])  # Original camera position
+        rot = dir_to_rpy_and_rot(fixed_position, center)
+    else:
+        # For other domains (z, yaw, round, etc.), use normal rotation computation
+        rot = dir_to_rpy_and_rot(translation, center)
 
     return rot
 
@@ -153,8 +170,8 @@ def convert_input_to_pose(input, rot, trans, transform_hom, scale, type):
     translation = convert_input_to_translation(input, trans, type)  # [B, 3]
     translation = translation.to(DEVICE)
 
-    #print(translation.device, rot.device, input.device)
-    #print(translation.dtype, rot.dtype, input.dtype)
+    # print(translation.device, rot.device, input.device)
+    # print(translation.dtype, rot.dtype, input.dtype)
     # print(rot.shape, input.shape, translation.shape)
     # Build transformation matrix in shape (B, 4, 4)
     B = translation.shape[0]

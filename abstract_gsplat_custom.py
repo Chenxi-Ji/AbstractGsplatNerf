@@ -249,7 +249,7 @@ def main(setup_dict):
 
     gs_rot = dir_to_rpy_and_rot(pos_start, pos_end)
     # gs_rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
-    gs_trans = np.array([0.0, 0.0, 0.0])
+    gs_trans = np.array([0.0, 0.0, 2.0])
 
     gs_transform_matrix = np.identity(4)
     # gs_transform_matrix[:3, :3] = gs_rot
@@ -263,15 +263,15 @@ def main(setup_dict):
 
 
     # Generate Rotation Matrix
-    start_arr = np.array([0.0, 0.0, camera_z_distance])  
-    end_arr = np.array([0.0, 0.0, camera_z_distance])  
+    start_arr = np.array([0.0, 0.0, 2.0])  
+    end_arr = np.array([0.0, 0.0, 0.0])  
     rot = dir_to_rpy_and_rot(start_arr, end_arr)
     # rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
     # Base translation: 
     # trans[0] = base x position (0 for x-axis movement)
     # trans[1] = base y position (0 for y-axis movement)  
     # trans[2] = fixed z distance from origin (camera looks along z-axis)
-    trans = np.array([0.0, 0.0, camera_z_distance])  
+    trans = np.array([0.0, 0.0, 2.0])  
     # trans = torch.from_numpy(trans).to(device=DEVICE, dtype=DTYPE)
 
     camera_transformation = np.identity(4)
@@ -280,13 +280,14 @@ def main(setup_dict):
 
     # camera_transformation = camera_transformation @ np.linalg.inv(gs_transform_matrix)
     # camera_transformation = np.linalg.inv(gs_transform_matrix)
-    camera_transformation = gs_transform_matrix
+    # camera_transformation = gs_transform_matrix
 
 
     rot = camera_transformation[:3, :3]
     trans = camera_transformation[:3, 3]
     rot = torch.from_numpy(rot).to(dtype=DTYPE, device=DEVICE)
     trans = torch.from_numpy(trans).to(device=DEVICE, dtype=DTYPE)
+    print(f"Camera tf Mat: {camera_transformation}")
 
 
 
@@ -517,7 +518,7 @@ if __name__=='__main__':
 
     # Choose "x" to move along x-axis, or "y" to move along y-axis
     # Camera will be at fixed z distance (trans[2]) and move perpendicular to z-axis
-    domain_type = "z"  # Camera moves along x-axis (perpendicular to z-axis)
+    domain_type = "x"  # Camera moves along x-axis (perpendicular to z-axis)
 
     save_folder = "Outputs/AbstractImages/"+object_name+"/"+domain_type
     save_ref = True
@@ -525,8 +526,6 @@ if __name__=='__main__':
 
     N_samples = 5
 
-    # Camera moves along x-axis (perpendicular to z-axis)
-    # Range: from -2 to +2 units along x-axis
     input_min = torch.tensor([0.0]).to(DEVICE)
     input_max = torch.tensor([7.0]).to(DEVICE)
 
